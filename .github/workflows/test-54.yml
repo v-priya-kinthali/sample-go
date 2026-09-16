@@ -284,7 +284,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+      # - uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+      - uses: actions/setup-go@v6
         id: setup-go
         with:
           go-version: '1.24'
