@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-13, windows-latest, windows-11-arm]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
         go: ['stable', 'oldstable', '1.25.5']
     steps:
       - uses: actions/checkout@v7
@@ -51,7 +51,7 @@ jobs:
           #   backslash C:\ paths, go-os=windows, go-arch=amd64
           #   go-cache: C:\Users\runneradmin\AppData\Local\go-build
           # ── EXPECTED (macos-latest)     ── go-os=darwin, go-arch=arm64
-          # ── EXPECTED (macos-13)         ── go-os=darwin, go-arch=amd64
+          # ── EXPECTED (macos-15-intel)         ── go-os=darwin, go-arch=amd64
           # ── EXPECTED (ubuntu-24.04-arm) ── go-os=linux,  go-arch=arm64
 
       - name: Every output must match `go env`
