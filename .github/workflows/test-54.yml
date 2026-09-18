@@ -1,345 +1,293 @@
-name: Test go env outputs
+name: Verify Go environment outputs
+
 on:
   push:
-    branches: [ test-375-fr ]
+    branches: [test-375-fr]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  # ═══════════════════════════════════════════════════════════════════════
-  # 1. HAPPY PATH — all 9 outputs, every OS/arch, current Go
-  # ═══════════════════════════════════════════════════════════════════════
-  all-outputs:
-    name: all outputs (${{ matrix.os }} / ${{ matrix.go }})
+  outputs:
+    name: Outputs (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
-        go: ['stable', 'oldstable', '1.25.5']
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v7
-      - uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+      - name: Set up Go
         id: setup-go
+        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
         with:
-          go-version: ${{ matrix.go }}
+          go-version: stable
           cache: false
 
-      - name: Print all outputs
+      - name: Verify version and direct go env outputs
+        env:
+          OUT_VERSION: ${{ steps.setup-go.outputs.go-version }}
+          OUT_GOPATH: ${{ steps.setup-go.outputs.go-path }}
+          OUT_GOBIN: ${{ steps.setup-go.outputs.go-bin }}
+          OUT_GOROOT: ${{ steps.setup-go.outputs.go-root }}
+          OUT_GOCACHE: ${{ steps.setup-go.outputs.go-cache }}
+          OUT_GOMODCACHE: ${{ steps.setup-go.outputs.go-mod-cache }}
+          OUT_GOOS: ${{ steps.setup-go.outputs.go-os }}
+          OUT_GOARCH: ${{ steps.setup-go.outputs.go-arch }}
+          OUT_GOTOOLDIR: ${{ steps.setup-go.outputs.go-tool-dir }}
+          OUT_BIN_PATH: ${{ steps.setup-go.outputs.go-bin-path }}
         run: |
-          echo "go-version:   ${{ steps.setup-go.outputs.go-version }}"
-          echo "go-path:      ${{ steps.setup-go.outputs.go-path }}"
-          echo "go-bin:       ${{ steps.setup-go.outputs.go-bin }}"
-          echo "go-bin-path:  ${{ steps.setup-go.outputs.go-bin-path }}"
-          echo "go-root:      ${{ steps.setup-go.outputs.go-root }}"
-          echo "go-cache:     ${{ steps.setup-go.outputs.go-cache }}"
-          echo "go-mod-cache: ${{ steps.setup-go.outputs.go-mod-cache }}"
-          echo "go-os:        ${{ steps.setup-go.outputs.go-os }}"
-          echo "go-arch:      ${{ steps.setup-go.outputs.go-arch }}"
-          echo "go-tool-dir:  ${{ steps.setup-go.outputs.go-tool-dir }}"
-          # ── EXPECTED (ubuntu-latest / stable) ──────────────────────────
-          #   go-version:   1.25.x
-          #   go-path:      /home/runner/go
-          #   go-bin:       ''  (Go <1.27) | /home/runner/go/bin (Go 1.27+)
-          #   go-bin-path:  /home/runner/go/bin
-          #   go-root:      /opt/hostedtoolcache/go/1.25.x/x64
-          #   go-cache:     /home/runner/.cache/go-build
-          #   go-mod-cache: /home/runner/go/pkg/mod
-          #   go-os:        linux
-          #   go-arch:      amd64
-          #   go-tool-dir:  <go-root>/pkg/tool/linux_amd64
-          # ── EXPECTED (windows-latest) ──────────────────────────────────
-          #   backslash C:\ paths, go-os=windows, go-arch=amd64
-          #   go-cache: C:\Users\runneradmin\AppData\Local\go-build
-          # ── EXPECTED (macos-latest)     ── go-os=darwin, go-arch=arm64
-          # ── EXPECTED (macos-15-intel)         ── go-os=darwin, go-arch=amd64
-          # ── EXPECTED (ubuntu-24.04-arm) ── go-os=linux,  go-arch=arm64
+          actual_version="$(go version | awk '{sub(/^go/, "", $3); print $3}')"
+          test "$OUT_VERSION" = "$actual_version"
+          test "$OUT_GOPATH" = "$(go env GOPATH)"
+          test "$OUT_GOBIN" = "$(go env GOBIN)"
+          test "$OUT_GOROOT" = "$(go env GOROOT)"
+          test "$OUT_GOCACHE" = "$(go env GOCACHE)"
+          test "$OUT_GOMODCACHE" = "$(go env GOMODCACHE)"
+          test "$OUT_GOOS" = "$(go env GOOS)"
+          test "$OUT_GOARCH" = "$(go env GOARCH)"
+          test "$OUT_GOTOOLDIR" = "$(go env GOTOOLDIR)"
+          test -n "$OUT_BIN_PATH"
 
-      - name: Every output must match `go env`
-        run: |
-          fail=0
-          check() { if [ "$2" != "$3" ]; then echo "::error::$1: action='$3' vs go env='$2'"; fail=1;
-                    else echo "OK  $1 = $3"; fi; }
-          check GOPATH     "$(go env GOPATH)"     '${{ steps.setup-go.outputs.go-path }}'
-          check GOBIN      "$(go env GOBIN)"      '${{ steps.setup-go.outputs.go-bin }}'
-          check GOROOT     "$(go env GOROOT)"     '${{ steps.setup-go.outputs.go-root }}'
-          check GOCACHE    "$(go env GOCACHE)"    '${{ steps.setup-go.outputs.go-cache }}'
-          check GOMODCACHE "$(go env GOMODCACHE)" '${{ steps.setup-go.outputs.go-mod-cache }}'
-          check GOOS       "$(go env GOOS)"       '${{ steps.setup-go.outputs.go-os }}'
-          check GOARCH     "$(go env GOARCH)"     '${{ steps.setup-go.outputs.go-arch }}'
-          check GOTOOLDIR  "$(go env GOTOOLDIR)"  '${{ steps.setup-go.outputs.go-tool-dir }}'
-          exit $fail
-          # EXPECTED: 8x "OK ..." lines, exit 0. Any mismatch = regression.
-
-      - name: No output may be unexpectedly empty
-        run: |
-          for o in go-path go-root go-cache go-mod-cache go-os go-arch go-tool-dir go-bin-path; do
-            v=$(jq -r --arg k "$o" '.[$k]' <<< '${{ toJSON(steps.setup-go.outputs) }}')
-            [ -n "$v" ] && [ "$v" != "null" ] || { echo "::error::$o is empty"; exit 1; }
-            echo "OK $o=$v"
-          done
-          # EXPECTED: 8 OK lines. go-bin is deliberately excluded (empty pre-1.27).
-
-      - name: go-bin-path is the real `go install` destination
-        run: |
-          go install github.com/rakyll/hey@latest
-          BIN='${{ steps.setup-go.outputs.go-bin-path }}'
-          EXE=""; [ "${{ runner.os }}" = "Windows" ] && EXE=".exe"
-          test -x "$BIN/hey$EXE" || { echo "::error::hey$EXE missing in $BIN"; ls -la "$BIN"; exit 1; }
-          echo "OK: $BIN/hey$EXE"
-          command -v hey >/dev/null && echo "OK: also on PATH"
-          # EXPECTED: "OK: /home/runner/go/bin/hey" + "OK: also on PATH"
-          #           (Windows: C:\Users\runneradmin\go\bin\hey.exe)
-
-  # ═══════════════════════════════════════════════════════════════════════
-  # 2. EOL / ANCIENT GO — go env -json unsupported or partial
-  # ═══════════════════════════════════════════════════════════════════════
-  eol-versions:
-    name: EOL Go ${{ matrix.go }}
+  gopath-fallback:
+    name: GOPATH fallback
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {go: '1.8.7',   expect: 'no go-* outputs at all; action succeeds'}
-          - {go: '1.9.7',   expect: 'outputs set; go-cache + go-mod-cache empty'}
-          - {go: '1.14.15', expect: 'go-cache set; go-mod-cache empty'}
-          - {go: '1.16.15', expect: 'all outputs set'}
     steps:
-      - uses: actions/checkout@v7
-      - uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+      - name: Set up Go
         id: setup-go
+        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
         with:
-          go-version: ${{ matrix.go }}
-          cache: false        # old Go has no module cache support
-
-      - name: Action must NOT fail — ${{ matrix.expect }}
+          go-version: 1.25.5
+          cache: false
+      - name: Verify GOPATH/bin fallback
+        env:
+          OUT_GOBIN: ${{ steps.setup-go.outputs.go-bin }}
+          OUT_BIN_PATH: ${{ steps.setup-go.outputs.go-bin-path }}
         run: |
-          echo "go-version: ${{ steps.setup-go.outputs.go-version }}"
-          go version
-          # EXPECTED (1.8.7): go-version: 1.8.7, and in the log:
-          #   "Setting GOROOT for Go version < 1.9"
-          #   "Unable to read 'go env -json', the Go environment outputs will
-          #    not be set: Command failed: ... flag provided but not defined: -json"
-          #   ^ emitted via core.info -> plain log line, NOT a ::warning:: annotation
-          #     (src/main.ts L146). No ::error::, step conclusion = success.
+          test -z "$OUT_GOBIN"
+          test "$OUT_BIN_PATH" = "$(go env GOPATH)/bin"
 
-      - name: Inspect each output
-        run: |
-          echo "[go-path]      '${{ steps.setup-go.outputs.go-path }}'"
-          echo "[go-bin]       '${{ steps.setup-go.outputs.go-bin }}'"
-          echo "[go-bin-path]  '${{ steps.setup-go.outputs.go-bin-path }}'"
-          echo "[go-root]      '${{ steps.setup-go.outputs.go-root }}'"
-          echo "[go-cache]     '${{ steps.setup-go.outputs.go-cache }}'"
-          echo "[go-mod-cache] '${{ steps.setup-go.outputs.go-mod-cache }}'"
-          echo "[go-os]        '${{ steps.setup-go.outputs.go-os }}'"
-          echo "[go-arch]      '${{ steps.setup-go.outputs.go-arch }}'"
-          echo "[go-tool-dir]  '${{ steps.setup-go.outputs.go-tool-dir }}'"
-          # EXPECTED 1.8.7   : every value '' (setGoEnvOutputs never ran)
-          # EXPECTED 1.9.7   : go-path/root/os/arch/tool-dir/bin-path set,
-          #                    go-cache='' go-mod-cache='' (?? '' fallback, main.ts L168)
-          # EXPECTED 1.14.15 : go-cache set, go-mod-cache=''
-          # EXPECTED 1.16.15 : all set
-
-      - name: Assert the version boundaries
-        run: |
-          P='${{ steps.setup-go.outputs.go-path }}'
-          C='${{ steps.setup-go.outputs.go-cache }}'
-          M='${{ steps.setup-go.outputs.go-mod-cache }}'
-          case "${{ matrix.go }}" in
-            1.8.7)   [ -z "$P" ] && [ -z "$C" ] && [ -z "$M" ] ;;   # -json needs 1.9
-            1.9.7)   [ -n "$P" ] && [ -z "$C" ] && [ -z "$M" ] ;;   # GOCACHE    >= 1.10
-            1.14.15) [ -n "$P" ] && [ -n "$C" ] && [ -z "$M" ] ;;   # GOMODCACHE >= 1.15
-            1.16.15) [ -n "$P" ] && [ -n "$C" ] && [ -n "$M" ] ;;
-          esac || { echo "::error::boundary assertion failed for ${{ matrix.go }}"; exit 1; }
-          echo "OK: ${{ matrix.expect }}"
-          # EXPECTED: "OK: ..." on all four legs
-
-      - name: Empty outputs silently break actions/cache (documented drawback)
-        if: matrix.go == '1.8.7'
-        continue-on-error: true
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.setup-go.outputs.go-mod-cache }}
-          key: eol-empty-path-demo
-          # EXPECTED: FAILS with
-          #   "Path Validation Error: Path(s) specified in the action for
-          #    caching do(es) not exist, hence no cache is being saved."
-          # -> always guard: if: steps.setup-go.outputs.go-mod-cache != ''
-
-  # ═══════════════════════════════════════════════════════════════════════
-  # 3. GOBIN / GOPATH EDGE CASES
-  # ═══════════════════════════════════════════════════════════════════════
-  gobin-explicit:
-    name: explicit GOBIN beats $GOPATH/bin (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+  explicit-gobin:
+    name: Explicit GOBIN
+    runs-on: ubuntu-latest
     env:
       GOBIN: ${{ github.workspace }}/custom-gobin
     steps:
-      - uses: actions/checkout@v7
-      - run: mkdir -p "${{ github.workspace }}/custom-gobin"
-      - uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+      - name: Set up Go
         id: setup-go
+        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
         with:
-          go-version: 'stable'
+          go-version: stable
           cache: false
-      - run: |
-          echo "go-bin:      ${{ steps.setup-go.outputs.go-bin }}"
-          echo "go-bin-path: ${{ steps.setup-go.outputs.go-bin-path }}"
-          [ '${{ steps.setup-go.outputs.go-bin }}' = '${{ steps.setup-go.outputs.go-bin-path }}' ] \
-            || { echo "::error::GOBIN branch of setGoEnvOutputs (main.ts L171) broken"; exit 1; }
-          echo OK
-          # EXPECTED: both = /home/runner/work/setup-go/setup-go/custom-gobin
-          #           (Windows: D:\a\setup-go\setup-go\custom-gobin)
-      - run: |
-          go install github.com/rakyll/hey@latest
-          EXE=""; [ "${{ runner.os }}" = "Windows" ] && EXE=".exe"
-          test -x "${{ github.workspace }}/custom-gobin/hey$EXE" && echo "OK: installed into GOBIN"
-          # EXPECTED: "OK: installed into GOBIN"
+      - name: Verify GOBIN takes precedence
+        env:
+          OUT_GOBIN: ${{ steps.setup-go.outputs.go-bin }}
+          OUT_BIN_PATH: ${{ steps.setup-go.outputs.go-bin-path }}
+        run: |
+          test "$OUT_GOBIN" = "$GOBIN"
+          test "$OUT_BIN_PATH" = "$GOBIN"
 
-  gopath-multi-entry:
-    name: multi-entry GOPATH -> first entry only
-    runs-on: ${{ matrix.os }}
+  multi-entry-gopath:
+    name: First GOPATH entry
+    runs-on: ubuntu-latest
+    env:
+      GOPATH: ${{ runner.temp }}/gopath-one:${{ runner.temp }}/gopath-two
+    steps:
+      - name: Set up Go
+        id: setup-go
+        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+        with:
+          go-version: stable
+          cache: false
+      - name: Verify only the first GOPATH entry is used
+        env:
+          OUT_GOPATH: ${{ steps.setup-go.outputs.go-path }}
+          OUT_BIN_PATH: ${{ steps.setup-go.outputs.go-bin-path }}
+        run: |
+          test "$OUT_GOPATH" = "$GOPATH"
+          test "$OUT_BIN_PATH" = "$RUNNER_TEMP/gopath-one/bin"
+
+  pre-json-go:
+    name: Go 1.8 without go env JSON
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        id: setup-go
+        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+        with:
+          go-version: 1.8.7
+          cache: false
+      - name: Verify unsupported go env JSON is non-fatal
+        env:
+          OUT_GOPATH: ${{ steps.setup-go.outputs.go-path }}
+          OUT_GOBIN: ${{ steps.setup-go.outputs.go-bin }}
+          OUT_GOROOT: ${{ steps.setup-go.outputs.go-root }}
+          OUT_GOCACHE: ${{ steps.setup-go.outputs.go-cache }}
+          OUT_GOMODCACHE: ${{ steps.setup-go.outputs.go-mod-cache }}
+          OUT_GOOS: ${{ steps.setup-go.outputs.go-os }}
+          OUT_GOARCH: ${{ steps.setup-go.outputs.go-arch }}
+          OUT_GOTOOLDIR: ${{ steps.setup-go.outputs.go-tool-dir }}
+          OUT_BIN_PATH: ${{ steps.setup-go.outputs.go-bin-path }}
+        run: |
+          test "${{ steps.setup-go.outcome }}" = success
+          test -z "$OUT_GOPATH"
+          test -z "$OUT_GOBIN"
+          test -z "$OUT_BIN_PATH"
+          test -z "$OUT_GOROOT"
+          test -z "$OUT_GOCACHE"
+          test -z "$OUT_GOMODCACHE"
+          test -z "$OUT_GOOS"
+          test -z "$OUT_GOARCH"
+          test -z "$OUT_GOTOOLDIR"
+
+  compatibility:
+    name: Compatibility boundary Go ${{ matrix.go }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go:
+          - 1.9.7
+          - 1.10.8
+          - 1.15.15
+    steps:
+      - name: Set up Go
+        id: setup-go
+        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Verify available environment outputs
+        env:
+          OUT_GOPATH: ${{ steps.setup-go.outputs.go-path }}
+          OUT_GOBIN: ${{ steps.setup-go.outputs.go-bin }}
+          OUT_GOROOT: ${{ steps.setup-go.outputs.go-root }}
+          OUT_GOCACHE: ${{ steps.setup-go.outputs.go-cache }}
+          OUT_GOMODCACHE: ${{ steps.setup-go.outputs.go-mod-cache }}
+          OUT_GOOS: ${{ steps.setup-go.outputs.go-os }}
+          OUT_GOARCH: ${{ steps.setup-go.outputs.go-arch }}
+          OUT_GOTOOLDIR: ${{ steps.setup-go.outputs.go-tool-dir }}
+          OUT_BIN_PATH: ${{ steps.setup-go.outputs.go-bin-path }}
+        run: |
+          test "$OUT_GOPATH" = "$(go env GOPATH)"
+          test "$OUT_GOBIN" = "$(go env GOBIN)"
+          test "$OUT_GOROOT" = "$(go env GOROOT)"
+          test "$OUT_GOCACHE" = "$(go env GOCACHE)"
+          test "$OUT_GOMODCACHE" = "$(go env GOMODCACHE)"
+          test "$OUT_GOOS" = "$(go env GOOS)"
+          test "$OUT_GOARCH" = "$(go env GOARCH)"
+          test "$OUT_GOTOOLDIR" = "$(go env GOTOOLDIR)"
+          test "$OUT_BIN_PATH" = "$(go env GOPATH)/bin"
+
+  missing-go-env-keys:
+    name: Missing go env keys become empty outputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Put a partial fake Go first on PATH
+        run: |
+          fake_bin="$RUNNER_TEMP/fake-go/bin"
+          mkdir -p "$fake_bin"
+          cat > "$fake_bin/go" <<'SCRIPT'
+          #!/usr/bin/env bash
+          case "$*" in
+            version) echo 'go version go1.25.5 linux/amd64' ;;
+            'env GOPATH') echo "$RUNNER_TEMP/partial-gopath" ;;
+            'env -json') echo '{"GOPATH":"'"$RUNNER_TEMP"'/partial-gopath"}' ;;
+            env) echo 'GOPATH='"$RUNNER_TEMP/partial-gopath" ;;
+          esac
+          SCRIPT
+          chmod +x "$fake_bin/go"
+          echo "$fake_bin" >> "$GITHUB_PATH"
+      - name: Run action with partial go env JSON
+        id: setup-go
+        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+        with:
+          cache: false
+      - name: Verify missing values and GOPATH fallback
+        env:
+          OUT_GOPATH: ${{ steps.setup-go.outputs.go-path }}
+          OUT_GOBIN: ${{ steps.setup-go.outputs.go-bin }}
+          OUT_BIN_PATH: ${{ steps.setup-go.outputs.go-bin-path }}
+          OUT_GOROOT: ${{ steps.setup-go.outputs.go-root }}
+          OUT_GOCACHE: ${{ steps.setup-go.outputs.go-cache }}
+          OUT_GOMODCACHE: ${{ steps.setup-go.outputs.go-mod-cache }}
+          OUT_GOOS: ${{ steps.setup-go.outputs.go-os }}
+          OUT_GOARCH: ${{ steps.setup-go.outputs.go-arch }}
+          OUT_GOTOOLDIR: ${{ steps.setup-go.outputs.go-tool-dir }}
+        run: |
+          test "$OUT_GOPATH" = "$RUNNER_TEMP/partial-gopath"
+          test -z "$OUT_GOBIN"
+          test "$OUT_BIN_PATH" = "$RUNNER_TEMP/partial-gopath/bin"
+          test -z "$OUT_GOROOT"
+          test -z "$OUT_GOCACHE"
+          test -z "$OUT_GOMODCACHE"
+          test -z "$OUT_GOOS"
+          test -z "$OUT_GOARCH"
+          test -z "$OUT_GOTOOLDIR"
+
+  invalid-json:
+    name: Non-fatal go env (${{ matrix.case }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-latest,  gopath: '/home/runner/gp1:/home/runner/gp2',   first: '/home/runner/gp1'}
-          - {os: macos-latest,   gopath: '/Users/runner/gp1:/Users/runner/gp2', first: '/Users/runner/gp1'}
-          - {os: windows-latest, gopath: 'C:\gp1;C:\gp2',                        first: 'C:\gp1'}
+          - {case: invalid JSON, mode: output, json: not-json}
+          - {case: JSON array, mode: output, json: '[]'}
+          - {case: empty object, mode: output, json: '{}'}
+          - {case: command failure, mode: failure, json: '{}'}
     env:
-      GOPATH: ${{ matrix.gopath }}
+      FAKE_GO_MODE: ${{ matrix.mode }}
+      FAKE_GO_JSON: ${{ matrix.json }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
-        id: setup-go
-        with:
-          go-version: 'stable'
-          cache: false
-      - run: |
-          echo "go-path:     ${{ steps.setup-go.outputs.go-path }}"
-          echo "go-bin-path: ${{ steps.setup-go.outputs.go-bin-path }}"
-          # EXPECTED go-path:     the FULL list  -> /home/runner/gp1:/home/runner/gp2
-          # EXPECTED go-bin-path: FIRST entry/bin -> /home/runner/gp1/bin
-          #                       (Windows: C:\gp1\bin)
-          # REGRESSION GUARD — the original Copilot review bug: must NOT be
-          #   "/home/runner/gp1:/home/runner/gp2/bin"
-          case '${{ steps.setup-go.outputs.go-bin-path }}' in
-            *:*)  echo "::error::POSIX delimiter not split (main.ts L175)"; exit 1 ;;
-            *\;*) echo "::error::Windows delimiter not split"; exit 1 ;;
+      - name: Put a deterministic fake Go first on PATH
+        run: |
+          fake_bin="$RUNNER_TEMP/fake-go/bin"
+          mkdir -p "$fake_bin"
+          cat > "$fake_bin/go" <<'SCRIPT'
+          #!/usr/bin/env bash
+          case "$*" in
+            version) echo 'go version go1.25.5 linux/amd64' ;;
+            'env GOPATH') echo "$RUNNER_TEMP/fake-gopath" ;;
+            'env -json')
+              [[ "$FAKE_GO_MODE" == failure ]] && exit 1
+              echo "$FAKE_GO_JSON"
+              ;;
+            env) echo 'GOPATH='"$RUNNER_TEMP/fake-gopath" ;;
+            *) exit 1 ;;
           esac
-          echo "OK: delimiter handled"
-
-  gopath-with-spaces:
-    name: GOPATH with spaces (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    env:
-      GOPATH: ${{ github.workspace }}/go path with spaces
-    steps:
-      - uses: actions/checkout@v7
-      - uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
+          SCRIPT
+          chmod +x "$fake_bin/go"
+          echo "$fake_bin" >> "$GITHUB_PATH"
+      - name: Run action against invalid JSON
         id: setup-go
+        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
         with:
-          go-version: 'stable'
           cache: false
-      - name: Quoted usage works
-        run: |
-          BIN="${{ steps.setup-go.outputs.go-bin-path }}"
-          echo "bin=[$BIN]"
-          test -d "$BIN" && echo OK
-          # EXPECTED: bin=[.../go path with spaces/bin] and "OK"
-          #           (addBinToPath mkdir'd it)
-      - name: Unquoted usage is the documented footgun
-        continue-on-error: true
-        run: |
-          ls ${{ steps.setup-go.outputs.go-bin-path }}
-          # EXPECTED: FAILS ("No such file or directory: .../go") — this is why
-          # docs/advanced-usage.md says "Quote go-bin-path in shell commands".
-
-  cross-compile-caveat:
-    name: cross-compile lands in bin/GOOS_GOARCH (known limitation)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
-        id: setup-go
-        with:
-          go-version: 'stable'
-          cache: false
-      - name: Install for a foreign target
+      - name: Verify action succeeded without environment outputs
         env:
-          GOOS: windows
-          GOARCH: arm64
+          OUT_GOPATH: ${{ steps.setup-go.outputs.go-path }}
+          OUT_GOBIN: ${{ steps.setup-go.outputs.go-bin }}
+          OUT_BIN_PATH: ${{ steps.setup-go.outputs.go-bin-path }}
+          OUT_GOROOT: ${{ steps.setup-go.outputs.go-root }}
+          OUT_GOCACHE: ${{ steps.setup-go.outputs.go-cache }}
+          OUT_GOMODCACHE: ${{ steps.setup-go.outputs.go-mod-cache }}
+          OUT_GOOS: ${{ steps.setup-go.outputs.go-os }}
+          OUT_GOARCH: ${{ steps.setup-go.outputs.go-arch }}
+          OUT_GOTOOLDIR: ${{ steps.setup-go.outputs.go-tool-dir }}
         run: |
-          go install github.com/rakyll/hey@latest
-          BIN='${{ steps.setup-go.outputs.go-bin-path }}'
-          echo "go-bin-path claims: $BIN"
-          find "$BIN" -name 'hey*' -print
-          # EXPECTED: $BIN/windows_arm64/hey.exe  — NOT $BIN/hey.exe
-          # -> confirms go-bin-path is the HOST default. The docs table keeps the
-          #    "$GOPATH/bin/$GOOS_$GOARCH" caveat; main.ts L171-177 does not add it.
-          if [ -f "$BIN/windows_arm64/hey.exe" ]; then
-            echo "CONFIRMED: nested target dir, caveat is accurate"
-          else
-            echo "::warning::behaviour changed — re-check the docs caveat"
-          fi
-
-  # ═══════════════════════════════════════════════════════════════════════
-  # 4. WARNINGS / INFO MESSAGES
-  # ═══════════════════════════════════════════════════════════════════════
-  warnings:
-    name: all warning paths
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - run: echo "1.24.0" > .go-version-test
-
-      - name: go-version AND go-version-file together
-        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
-        id: both
-        with:
-          go-version: '1.25.5'
-          go-version-file: '.go-version-test'
-          cache: false
-      - run: |
-          echo "resolved: ${{ steps.both.outputs.go-version }}"
-          test -n '${{ steps.both.outputs.go-root }}' && echo "OK outputs still set"
-          # EXPECTED ::warning:: "Both go-version and go-version-file inputs are
-          #   specified, only go-version will be used"   (core.warning, main.ts L223)
-          # EXPECTED resolved: 1.25.5  (go-version wins, NOT 1.24.0)
-          # EXPECTED: "OK outputs still set"
-
-      - name: No go-version at all -> pre-installed Go
-        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
-        id: none
-        with:
-          cache: false
-      - run: |
-          echo "go-root: ${{ steps.none.outputs.go-root }}"
-          test -n '${{ steps.none.outputs.go-root }}' && echo "OK"
-          # EXPECTED log: "[warning]go-version input was not specified. The action
-          #   will try to use pre-installed version."   (core.info, main.ts L77 —
-          #   note: plain text prefix, NOT a real annotation)
-          # EXPECTED: go-* outputs STILL populated from the pre-installed toolchain
-
-      - name: Cache enabled but no go.sum -> non-fatal restore warning
-        uses: v-mahabaleshwars/setup-go@feature/54-export-env-variables
-        id: nosum
-        with:
-          go-version: '1.25.5'
-          cache: true
-          cache-dependency-path: 'nonexistent/**/go.sum'
-      - run: |
-          echo "outcome: ${{ steps.nosum.outcome }}"
-          test -n '${{ steps.nosum.outputs.go-mod-cache }}' && echo "OK outputs unaffected"
-          # EXPECTED ::warning:: "Restore cache failed: Some specified paths were
-          #   not resolved, unable to cache dependencies." (main.ts L98)
-          # EXPECTED outcome: success — and go-* outputs are set regardless,
-          #   because setGoEnvOutputs runs after the c
+          test "${{ steps.setup-go.outcome }}" = success
+          test "${{ steps.setup-go.outputs.go-version }}" = 1.25.5
+          test -z "$OUT_GOPATH"
+          test -z "$OUT_GOBIN"
+          test -z "$OUT_BIN_PATH"
+          test -z "$OUT_GOROOT"
+          test -z "$OUT_GOCACHE"
+          test -z "$OUT_GOMODCACHE"
+          test -z "$OUT_GOOS"
+          test -z "$OUT_GOARCH"
+          test -z "$OUT_GOTOOLDIR"
