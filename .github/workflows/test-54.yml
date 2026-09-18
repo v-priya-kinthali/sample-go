@@ -95,7 +95,7 @@ jobs:
     name: First GOPATH entry
     runs-on: ubuntu-latest
     env:
-      GOPATH: ${{ runner.temp }}/gopath-one:${{ runner.temp }}/gopath-two
+      GOPATH: ${{ github.workspace }}/gopath-one:${{ github.workspace }}/gopath-two
     steps:
       - name: Set up Go
         id: setup-go
@@ -109,7 +109,7 @@ jobs:
           OUT_BIN_PATH: ${{ steps.setup-go.outputs.go-bin-path }}
         run: |
           test "$OUT_GOPATH" = "$GOPATH"
-          test "$OUT_BIN_PATH" = "$RUNNER_TEMP/gopath-one/bin"
+          test "$OUT_BIN_PATH" = "$GITHUB_WORKSPACE/gopath-one/bin"
 
   pre-json-go:
     name: Go 1.8 without go env JSON
