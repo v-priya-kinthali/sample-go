@@ -1,0 +1,81 @@
+name: Test native Go version syntax (PR #2)
+on:
+  push:
+    branches: [test-375-fr]
+  workflow_dispatch:
+
+jobs:
+  valid:
+    name: ${{ matrix.case }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        case: [native-minor, native-patch, native-beta, native-rc, semver-minor, custom-native-patch, custom-native-rc, custom-mirror-env, aka-ms-native]
+        include:
+          - {case: native-minor,        version: 'go1.21',      base: '',                                       expected: 'go1.21.0'}
+          - {case: native-patch,        version: 'go1.21.5',    base: '',                                       expected: 'go1.21.5'}
+          - {case: native-beta,         version: 'go1.18beta2', base: '',                                       expected: 'go1.18beta2'}
+          - {case: native-rc,           version: 'go1.21rc2',   base: '',                                       expected: 'go1.21rc2'}
+          - {case: semver-minor,        version: '1.21',        base: '',                                       expected: 'go1.21.'}   # any patch
+          - {case: custom-native-patch, version: 'go1.22.3',    base: 'https://go.dev/dl',                      expected: 'go1.22.3'}
+          - {case: custom-native-rc,    version: 'go1.21rc2',   base: 'https://go.dev/dl',                      expected: 'go1.21rc2'}
+          - {case: custom-mirror-env,   version: 'go1.22.3',    base: 'ENV',                                    expected: 'go1.22.3'}
+          - {case: aka-ms-native,       version: 'go1.25',      base: 'https://aka.ms/golang/release/latest',   expected: 'go1.25'}    # latest 1.25.x
+    env:
+      GO_DOWNLOAD_BASE_URL: ${{ matrix.base == 'ENV' && 'https://go.dev/dl' || '' }}
+    steps:
+      - uses: v-jitenderpalsingh/setup-go@59117de9e67d70a12298f726ad5c6669258e8c6d
+        id: setup
+        with:
+          go-version: ${{ matrix.version }}
+          go-download-base-url: ${{ matrix.base != 'ENV' && matrix.base || '' }}
+          cache: false
+      - name: Verify
+        shell: bash
+        run: |
+          actual="$(go version)"
+          echo "go version -> $actual | output -> ${{ steps.setup.outputs.go-version }}"
+          [[ "$actual" == *"${{ matrix.expected }}"* ]] || { echo "::error::expected ${{ matrix.expected }}"; exit 1; }
+
+  invalid:
+    name: invalid ${{ matrix.version }} (custom=${{ matrix.base != '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {version: 'go1.21.x',      base: ''}
+          - {version: 'go^1.21',       base: ''}
+          - {version: 'go1',           base: ''}
+          - {version: 'go1.21.5beta1', base: ''}
+          - {version: 'go1.21.0rc1',   base: ''}
+          - {version: 'go1.21.x',      base: 'https://go.dev/dl'}
+    steps:
+      - uses: v-jitenderpalsingh/setup-go@59117de9e67d70a12298f726ad5c6669258e8c6d
+        id: setup
+        continue-on-error: true
+        with:
+          go-version: ${{ matrix.version }}
+          go-download-base-url: ${{ matrix.base }}
+          cache: false
+      - name: Assert failure
+        run: '[ "${{ steps.setup.outcome }}" = "failure" ] || { echo "::error::should have failed"; exit 1; }'
+
+  file-input:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "go1.21.5" > .go-version
+      - uses: v-jitenderpalsingh/setup-go@59117de9e67d70a12298f726ad5c6669258e8c6d
+        with: {go-version-file: .go-version, cache: false}
+      - run: go version | grep -q 'go1.21.5'
+
+  cache-reuse-custom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: v-jitenderpalsingh/setup-go@59117de9e67d70a12298f726ad5c6669258e8c6d
+        with: {go-version: 'go1.22.3', go-download-base-url: 'https://go.dev/dl', cache: false}
+      - uses: v-jitenderpalsingh/setup-go@59117de9e67d70a12298f726ad5c6669258e8c6d
+        with: {go-version: 'go1.22.3', go-download-base-url: 'https://go.dev/dl', cache: false}
+        # Check the log for: "Found in cache @ ..." on the second step
