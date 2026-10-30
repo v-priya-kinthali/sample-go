@@ -1,0 +1,109 @@
+name: Test split Go caches
+
+on:
+  push:
+    branches: [ test-375-fr ]
+  workflow_dispatch:
+
+jobs:
+  # 1. Module cache shared across Go versions; build cache per version
+  matrix-versions:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1          # serialize so leg 2 can reuse leg 1's module entry
+      matrix:
+        go: ['1.25.x', '1.26.x']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@feat/split-go-caches
+        id: setup
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: go.sum
+      - run: echo "cache-hit=${{ steps.setup.outputs.cache-hit }}"
+      - run: go mod download
+      - run: go build ./...
+
+  # 2. Same OS, different architectures -> modules shared, build separate
+  matrix-arch:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@feat/split-go-caches
+        id: setup
+        with:
+          go-version: '1.26.x'
+      - run: go build ./...
+
+  # 3. Different Linux images -> modules shared, build separate
+  matrix-image:
+    runs-on: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@feat/split-go-caches
+        with:
+          go-version: '1.26.x'
+      - run: go build ./...
+
+  # 4. Cross-OS isolation (keys must differ, no sharing)
+  cross-os:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@feat/split-go-caches
+        with:
+          go-version: '1.26.x'
+      - run: go build ./...
+
+  # 5. Verify the new key namespaces exist and inspect entries
+  inspect:
+    needs: [matrix-versions, matrix-arch]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const {data} = await github.rest.actions.getActionsCacheList({
+              owner: context.repo.owner, repo: context.repo.repo, per_page: 100
+            });
+            for (const c of data.actions_caches)
+              core.info(`${c.key}  ${(c.size_in_bytes/1048576).toFixed(1)} MiB`);
+
+  # 6. Manual restore integration using the new two-entry layout
+  manual-restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@feat/split-go-caches
+        id: setup-go
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - shell: bash
+        run: |
+          echo "GO_MOD_CACHE=$(go env GOMODCACHE)" >> $GITHUB_ENV
+          echo "GO_BUILD_CACHE=$(go env GOCACHE)"  >> $GITHUB_ENV
+          echo "ARCH=$(go env GOHOSTARCH)"         >> $GITHUB_ENV
+          echo "CACHE_OS_SUFFIX=$ImageOS-"         >> $GITHUB_ENV
+      - uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.GO_MOD_CACHE }}
+          key: setup-go-modules-${{ runner.os }}-${{ hashFiles('go.mod') }}
+      - uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.GO_BUILD_CACHE }}
+          key: setup-go-build-${{ runner.os }}-${{ env.ARCH }}-${{ env.CACHE_OS_SUFFIX }}go-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.mod') }}
+      - run: go mod download && go build ./...
